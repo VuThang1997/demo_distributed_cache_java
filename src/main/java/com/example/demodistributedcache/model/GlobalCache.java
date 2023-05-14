@@ -2,6 +2,7 @@ package com.example.demodistributedcache.model;
 
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -13,34 +14,23 @@ import java.util.stream.Collectors;
 @Component
 public class GlobalCache {
 
-    private final Map<Integer, String> cache = new ConcurrentHashMap<>();
-    private final Map<Integer, CompletableFuture<KeyValue>> progressingKeys = new ConcurrentHashMap<>();
+    private final Map<Integer, CompletableFuture<KeyValue>> cache = new ConcurrentHashMap<>();
 
 
-    public String getValueFromCache(Integer key) {
-        return cache.get(key);
-    }
-
-    public String getValueFromInternet(Integer key) {
-        CompletableFuture<KeyValue> future = progressingKeys.get(key);
+    public KeyValue getValueFromCache(Integer key) {
+        CompletableFuture<KeyValue> future = cache.get(key);
         if (future == null) {
-            // need to test correctness of these lines
             future = CompletableFuture
                     .supplyAsync(() -> computeValueFromInternet(key))
-                    .thenApply(strValue -> new KeyValue(key, strValue))
-                    .thenApply(keyValue -> {
-                        cache.put(key, keyValue.getValue());
-                        progressingKeys.remove(key);
-                        return keyValue;
-                    });
-            progressingKeys.put(key, future);
+                    .thenApply(strValue -> new KeyValue(key, strValue));
+            cache.put(key, future);
         }
 
-        return future.join().getValue();
+        return future.join();
     }
 
     private String computeValueFromInternet(Integer key) {
-        System.out.println("-------------- Sleep 3s to get value for key " + key );
+        System.out.println("-------------- Sleep 3s to get value for key " + key + ", time = " + LocalDateTime.now());
         try {
             Thread.sleep(3000L);
         } catch (InterruptedException e) {
@@ -48,29 +38,26 @@ public class GlobalCache {
         }
 
         Random random = new Random();
-        return key + "" + random.nextInt(1000);
+        String value = key + "" + random.nextInt(1000);
+
+        System.out.println("-------------- Finish get value for key " + key + ", time = " + LocalDateTime.now());
+        return value;
     }
 
-    public List<KeyValue> getValuesFromInternet(List<Integer> keys) {
+    public List<KeyValue> getValuesFromCache(List<Integer> keys) {
         List<CompletableFuture<KeyValue>> futureList = new ArrayList<>(keys.size());
 
         // check with progressingKeys
         for (Integer key : keys) {
             // if have key then get CompletableFuture
-            CompletableFuture<KeyValue> future = progressingKeys.get(key);
+            CompletableFuture<KeyValue> future = cache.get(key);
 
             // if not have key then generate new CompletableFuture
             if (future == null) {
-                // need to test correctness of these lines
                 future = CompletableFuture
                         .supplyAsync(() -> computeValueFromInternet(key))
-                        .thenApply(strValue -> new KeyValue(key, strValue))
-                        .thenApply(keyValue -> {
-                            cache.put(key, keyValue.getValue());
-                            progressingKeys.remove(key);
-                            return keyValue;
-                        });
-                progressingKeys.put(key, future);
+                        .thenApply(strValue -> new KeyValue(key, strValue));
+                cache.put(key, future);
             }
 
             futureList.add(future);
@@ -84,7 +71,10 @@ public class GlobalCache {
     }
 
     public KeyValue removeKey(Integer key) {
-        String value = cache.remove(key);
-        return new KeyValue(key, value);
+        CompletableFuture<KeyValue> future = cache.remove(key);
+        if (future != null) {
+            return future.join();
+        }
+        return new KeyValue(key, "Not exist this key in cache");
     }
 }
